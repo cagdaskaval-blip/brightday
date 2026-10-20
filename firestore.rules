@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signedIn() { return request.auth != null; }
+  function parent(f) { return signedIn() && get(/databases/$(database)/documents/families/$(f)/members/$(request.auth.uid)).data.role == 'parent'; }
+  function member(f) { return signedIn() && exists(/databases/$(database)/documents/families/$(f)/members/$(request.auth.uid)); }
+  match /profiles/{uid} {
+   allow read: if signedIn() && request.auth.uid == uid;
+   allow create: if signedIn() && request.auth.uid == uid && request.resource.data.keys().hasOnly(['familyId']) && request.resource.data.familyId is string;
+   allow update: if false;
+  }
+  match /families/{f} {
+   allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.keys().hasOnly(['ownerUid','createdAt']);
+   allow read: if member(f);
+   allow update,delete: if false;
+   match /members/{uid} {
+    allow read: if signedIn() && (request.auth.uid == uid || parent(f));
+    allow create: if (signedIn() && uid == request.auth.uid && getAfter(/databases/$(database)/documents/families/$(f)).data.ownerUid == uid && request.resource.data.role == 'parent') || (parent(f) && request.resource.data.role in ['parent','child']);
+    allow update,delete: if false;
+   }
+   match /requests/{uid} {
+    allow create: if signedIn() && request.auth.uid == uid && request.resource.data.requestedRole in ['parent','child'] && request.resource.data.keys().hasOnly(['email','requestedRole']);
+    allow read,delete: if parent(f);
+    allow update: if false;
+   }
+   match /tasks/{taskId} {
+    allow read: if member(f);
+    allow create,update: if parent(f) && request.resource.data.id == taskId && request.resource.data.keys().hasOnly(['id','name','emoji','time','repeat','weekdays','start','steps','nameFr','stepsFr','image']) && request.resource.data.name is string && request.resource.data.name.size() <= 70;
+    allow delete: if parent(f);
+   }
+   match /completions/{completionId} {
+    allow read: if member(f);
+    allow create,update: if member(f) && request.resource.data.completed == true && request.resource.data.by == request.auth.uid && request.resource.data.keys().hasOnly(['completed','by','at']);
+    allow delete: if member(f);
+   }
+  }
+ }
+}
